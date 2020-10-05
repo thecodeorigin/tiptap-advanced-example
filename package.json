@@ -8,6 +8,10 @@
   },
   "dependencies": {
     "core-js": "^3.6.5",
+    "fuse.js": "^6.4.1",
+    "tippy.js": "^6.2.6",
+    "tiptap": "^1.30.0",
+    "tiptap-extensions": "^1.33.1",
     "vue": "^2.6.11"
   },
   "devDependencies": {
