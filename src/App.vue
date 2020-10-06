@@ -4,6 +4,7 @@
     <!--  -->
     <div style="width: 300px; height: 100px">
       <MentionableEditor
+        style="background-color: #f5f5f5; color: gray"
         id="mentionable-editor"
         v-model="content"
         @mentioning="onMentioning"
