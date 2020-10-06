@@ -1,21 +1,25 @@
 <template>
-  <div class="mentionable-editor__wrapper">
+  <div class="mentionable-editor__wrapper" :id="id">
     <div class="editor">
       <editor-content class="editor__content" :editor="editor" />
       <div class="suggestion-list" v-show="showSuggestions" ref="suggestions">
         <template v-if="hasResults">
-          <div
-            v-for="(user, index) in filteredUsers"
-            :key="user.id"
-            class="suggestion-list__item"
-            :class="{ 'is-selected': navigatedUserIndex === index }"
-            @click="selectUser(user)"
-          >
-            {{ user.name }}
-          </div>
+            <div
+              v-for="(item, index) in filteredItems"
+              :key="item.id"
+              class="suggestion-list__item"
+              :class="{ 'is-selected': navigatedItemIndex === index }"
+              @click="selectItem(item)"
+            >
+              <slot name="mention-item" :item="item">
+                {{ item.name }}
+              </slot>
+            </div>
         </template>
         <div v-else class="suggestion-list__item is-empty">
-          No items found
+          <slot name="no-results-item">
+            No items found
+          </slot>
         </div>
       </div>
     </div>
@@ -23,7 +27,8 @@
 </template>
 
 <script>
-import Fuse from 'fuse.js'
+// yarn add tiptap tiptap-extensions tippy.js
+// This component has built-in filter for mentionItems already
 import tippy, { sticky } from 'tippy.js'
 import { Editor, EditorContent } from 'tiptap'
 import {
@@ -36,6 +41,18 @@ export default {
   },
   props: {
     value: String,
+    id: {
+      type: String,
+      required: true
+    },
+    mentionValue: {
+      type: String,
+      default: 'id'
+    },
+    mentionLabel: {
+      type: String,
+      default: 'name'
+    },
     mentionPrefix: {
       type: String,
       default: '@'
@@ -60,16 +77,48 @@ export default {
       editor: null,
       query: null,
       suggestionRange: null,
-      filteredUsers: [],
-      navigatedUserIndex: 0,
+      filteredItems: [],
+      navigatedItemIndex: 0,
       insertMention: () => {},
     }
   },
-  mounted() {
-    this.editor = new Editor({
+  async mounted() {
+    this.editor = await new Editor({
+      onInit: () => {
+        // editor is initialized
+        // Handle paste from clipboard (both text and image paste)
+        document.querySelector('#' + this.id).addEventListener('paste', (event) => {
+          // consider the first item (can be easily extended for multiple items)
+          if(event.clipboardData.getData('Text')) {
+            this.$emit('paste', {
+              type: 'text',
+              value: event.clipboardData.getData('Text')
+            })
+          } else {
+            var item = event.clipboardData.items[1] ? event.clipboardData.items[1] : event.clipboardData.items[0]
+            if (item.type.indexOf("image") === 0) {
+              var blob = item.getAsFile()
+              var reader = new FileReader()
+              reader.onload = (event) => {
+                this.$emit('paste', {
+                  type: 'image',
+                  value: event.target.result
+                })
+              };
+              reader.readAsDataURL(blob)
+            }
+          }
+        });
+      },
       // Editor options
       onUpdate: ({ getHTML }) => {
+        let div = document.createElement("div")
+        div.innerHTML = getHTML()
         this.$emit('input', getHTML())
+        this.$emit('change', {
+          html: getHTML(),
+          text: div.textContent
+        })
       },
       // Extension options
       extensions: [
@@ -90,7 +139,7 @@ export default {
             items, query, range, command, virtualNode,
           }) => {
             this.query = query
-            this.filteredUsers = items
+            this.filteredItems = items
             this.suggestionRange = range
             this.renderPopup(virtualNode)
             // we save the command for inserting a selected mention
@@ -103,22 +152,23 @@ export default {
             items, query, range, virtualNode,
           }) => {
             this.query = query
-            this.filteredUsers = items
+            this.filteredItems = items
             this.suggestionRange = range
-            this.navigatedUserIndex = 0
+            this.navigatedItemIndex = 0
             this.renderPopup(virtualNode)
           },
           // is called when a suggestion is cancelled
           onExit: () => {
             // reset all saved values
             this.query = null
-            this.filteredUsers = []
+            this.filteredItems = []
             this.suggestionRange = null
-            this.navigatedUserIndex = 0
+            this.navigatedItemIndex = 0
             this.destroyPopup()
           },
           // is called on every keyDown event while a suggestion is active
           onKeyDown: ({ event }) => {
+            this.$emit('mentioning', this.query)
             if (event.key === 'ArrowUp') {
               this.upHandler()
               return true
@@ -133,23 +183,6 @@ export default {
             }
             return false
           },
-          // is called when a suggestion has changed
-          // this function is optional because there is basic filtering built-in
-          // you can overwrite it if you prefer your own filtering
-          // in this example we use fuse.js with support for fuzzy search
-          onFilter: async (items, query) => {
-            if (!query) {
-              return items
-            }
-            await new Promise(resolve => {
-              setTimeout(resolve, 500)
-            })
-            const fuse = new Fuse(items, {
-              threshold: 0.2,
-              keys: ['name'],
-            })
-            return fuse.search(query).map(item => item.item)
-          },
         }),
       ],
     })
@@ -157,7 +190,7 @@ export default {
   },
   computed: {
     hasResults() {
-      return this.filteredUsers.length
+      return this.filteredItems.length
     },
     showSuggestions() {
       return this.query || this.hasResults
@@ -175,29 +208,30 @@ export default {
     // navigate to the previous item
     // if it's the first item, navigate to the last one
     upHandler() {
-      this.navigatedUserIndex = ((this.navigatedUserIndex + this.filteredUsers.length) - 1) % this.filteredUsers.length
+      this.navigatedItemIndex = ((this.navigatedItemIndex + this.filteredItems.length) - 1) % this.filteredItems.length
     },
     // navigate to the next item
     // if it's the last item, navigate to the first one
     downHandler() {
-      this.navigatedUserIndex = (this.navigatedUserIndex + 1) % this.filteredUsers.length
+      this.navigatedItemIndex = (this.navigatedItemIndex + 1) % this.filteredItems.length
     },
     enterHandler() {
-      const user = this.filteredUsers[this.navigatedUserIndex]
-      if (user) {
-        this.selectUser(user)
+      const item = this.filteredItems[this.navigatedItemIndex]
+      if (item) {
+        this.selectItem(item)
       }
     },
     // we have to replace our suggestion text with a mention
     // so it's important to pass also the position of your suggestion text
-    selectUser(user) {
+    selectItem(item) {
       this.insertMention({
         range: this.suggestionRange,
         attrs: {
-          id: user.id,
-          label: user.name + this.mentionPostfix,
+          id: item[this.mentionValue],
+          label: item[this.mentionLabel] + this.mentionPostfix,
         },
       })
+      this.$emit('mention', item)
       this.editor.focus()
     },
     // renders a popup with suggestions
@@ -238,8 +272,32 @@ export default {
 .mentionable-editor__wrapper .ProseMirror {
   font-family: Arial;
   padding: 10px;
+  box-sizing: border-box;
   border: 1px solid rgb(201, 201, 201);
+  height: 100%;
+  overflow: auto;
 }
+
+/* width */
+.mentionable-editor__wrapper .ProseMirror::-webkit-scrollbar {
+  width: 6px;
+}
+/* Track */
+.mentionable-editor__wrapper .ProseMirror::-webkit-scrollbar-track {
+  background: rgb(245, 245, 245);
+}
+/* Handle */
+.mentionable-editor__wrapper .ProseMirror::-webkit-scrollbar-thumb {
+  background-color: rgb(230, 230, 230);
+  transition-duration: 0.5s;
+  border-radius: 4px;
+}
+/* Handle on hover */
+.mentionable-editor__wrapper .ProseMirror::-webkit-scrollbar-thumb:hover {
+  background-color: rgb(189, 189, 189);
+  cursor: pointer;
+}
+
 .mentionable-editor__wrapper .ProseMirror p {
   margin-top: 0;
   margin-bottom: 0.5rem;
@@ -247,8 +305,15 @@ export default {
 .mentionable-editor__wrapper .ProseMirror-focused {
   outline: none;
 }
+.mentionable-editor__wrapper {
+  height: 100%;
+}
 .mentionable-editor__wrapper .editor {
   position: relative;
+  height: 100%;
+}
+.mentionable-editor__wrapper .editor__content {
+  height: 100%;
 }
 .mentionable-editor__wrapper .mention {
   background: rgba(0, 0, 0, 0.1);
